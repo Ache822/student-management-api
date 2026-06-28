@@ -3,6 +3,9 @@ const express = require('express');
 const mongoose = require('mongoose');
 const morgan = require('morgan');
 const cors = require('cors');
+const helmet = require('helmet');
+const Student = require('./models/Student');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -10,10 +13,13 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
+app.use(helmet());
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB connected successfully! 🎉'))
-  .catch(err => console.error('Database connection error ❌:', err));
+mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 5000
+})
+.then(() => console.log('MongoDB connected successfully! '))
+.catch(err => console.error('Database connection error but server is still running:', err.message));
 
 // Request Timer
 const requestTimer = (req, res, next) => {
@@ -45,29 +51,16 @@ const adminOnly = (req, res, next) => {
     }
 };
 
-// 
-const students = [
-    { id: 1, name: 'Alice', major: 'Data Science' },
-    { id: 2, name: 'Brandon', major: 'Software Engineering' },
-    { id: 3, name: 'Charles', major: 'Cybersecurity'}
-];
 
 // ROUTES
-app.post('/students', (req, res) => {
+app.post('/students', async (req, res) => {
     try {
-        const { name, major } = req.body;
+        // Mongoose automatically validates required fields based on our Student Schema
+        const newStudent = new Student(req.body);
+        const savedStudent = await newStudent.save();
 
-        // Manual validation: If data is missing, "throw" an error
-        if (!name || !major) {
-            throw new Error("Incomplete student data. Name and Major are required.");
-        }
-
-        const newStudent = { id: students.length + 1, name, major };
-        students.push(newStudent);
-
-        res.status(201).json(newStudent);
+        res.status(201).json(savedStudent);
     } catch (err) {
-        // This catches the "throw" from above or any unexpected system crashes
         res.status(400).json({ error: 'Bad Request', details: err.message });
     }
 });
@@ -83,8 +76,49 @@ app.get('/about', (req, res) => {
     });
 });
 
-app.get('/students', (req, res) => {
-    res.json(students);
+app.get('/students', async (req, res) => {
+    try {
+        const allStudents = await Student.find();
+        res.json(allStudents);
+    } catch (err) {
+        res.status(500).json({ error: 'Server Error', details: err.message });
+    }
+});
+
+// GET a single student by ID
+app.get('/students/:id', async (req, res, next) => {
+    try {
+        const student = await Student.findById(req.params.id);
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+        res.json(student);
+    } catch (err) {
+        next(err); // Passes error straight to our global error handler!
+    }
+    
+app.put('/students/:id', async (req, res) => {
+    try {
+        const updatedStudent = await Student.findByIdAndUpdate(
+            req.params.id, 
+            req.body, 
+            { new: true, runValidators: true }
+        );
+        if (!updatedStudent) return res.status(404).json({ error: 'Student not found' });
+        res.json(updatedStudent);
+    } catch (err) {
+        res.status(400).json({ error: 'Bad Request', details: err.message });
+    }
+});
+
+app.delete('/students/:id', async (req, res) => {
+    try {
+        const deletedStudent = await Student.findByIdAndDelete(req.params.id);
+        if (!deletedStudent) return res.status(404).json({ error: 'Student not found' });
+        res.json({ message: 'Student deleted successfully', deletedStudent });
+    } catch (err) {
+        res.status(500).json({ error: 'Server Error', details: err.message });
+    }
 });
 
 app.get('/admin/dashboard', adminOnly, (req, res) => {
@@ -93,8 +127,13 @@ app.get('/admin/dashboard', adminOnly, (req, res) => {
 
 // This catches any error not caught by a try/catch block
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).send('Something broke on our end!');
+    console.error('⚠️ Global Error Caught:', err.stack);
+    
+    // Never expose raw internal server errors/stacks to clients
+    res.status(err.status || 500).json({
+        error: 'Internal Server Error',
+        message: err.message || 'Something went wrong on our end.'
+    });
 });
 
 app.listen(PORT, () => {
