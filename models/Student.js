@@ -21,7 +21,14 @@ const StudentSchema = new mongoose.Schema({
   isEnrolled: {
     type: Boolean,
     default: true
+  },
+   
+  enrolledCourses: [
+  {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Course' // This matches the model name exported in Course.js
   }
+]
 }, {
   timestamps: true // Automatically creates 'createdAt' and 'updatedAt' fields
 });
